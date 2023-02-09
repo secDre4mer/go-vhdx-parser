@@ -3,12 +3,13 @@ package vhdx
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/google/uuid"
 	"io"
 	"log"
 	"math"
 	"math/bits"
 	"os"
+
+	"github.com/google/uuid"
 
 	"github.com/masahiro331/go-vhdx-parser/pkg/utils"
 	"golang.org/x/xerrors"
@@ -21,7 +22,7 @@ type VHDX struct {
 	MetadataTable         MetadataTable
 	BlockAllocationTables []BAT
 
-	file *os.File
+	file io.ReadSeeker
 	off  int64
 
 	state VHDXState
@@ -137,17 +138,25 @@ func (v *VHDX) Size() int64 {
 	return int64(v.MetadataTable.SystemData.VirtualDiskSize)
 }
 
-func (v *VHDX) Close() error {
-	return v.file.Close()
-}
-
+// Open opens a specified file and parses it as a VHDX, returning a section reader that reads from the VHDX file.
+// Note that the file descriptor is never closed, so use with caution in contexts where this is called multiple times.
 func Open(name string) (*io.SectionReader, error) {
 	f, err := os.Open(name)
 	if err != nil {
 		return nil, xerrors.Errorf("failed to open %s: %w", name, err)
 	}
 
+	vhdx, err := Parse(f)
+	if err != nil {
+		return nil, xerrors.Errorf("failed to parse %s: %w", name, err)
+	}
+
+	return io.NewSectionReader(vhdx, 0, vhdx.Size()), nil
+}
+
+func Parse(f io.ReadSeeker) (*VHDX, error) {
 	v := VHDX{file: f}
+	var err error
 	v.HeaderSection, err = parseHeaderSection(f)
 	if err != nil {
 		return nil, err
@@ -231,7 +240,7 @@ func Open(name string) (*io.SectionReader, error) {
 		return nil, xerrors.Errorf("failed to seek initial offset: %w", err)
 	}
 
-	return io.NewSectionReader(&v, 0, v.Size()), nil
+	return &v, nil
 }
 
 func (v *VHDX) NewState() VHDXState {
